@@ -1,238 +1,104 @@
 # Courier Tracking
 
-Spring Boot service that ingests courier geolocations, detects Migros store entrances and reports the total distance
-travelled by each courier.
-
-## Requirements
-
-- Java 21
-- Maven (the bundled `./mvnw` wrapper is enough)
-- Optional: Docker (Docker image, docker-compose, `PostgresIntegrationTest`)
+Spring Boot REST service that takes streaming courier geolocations, logs every courier entrance to a Migros store
+(100 m radius) and reports the total distance travelled by each courier.
 
 ## Run
 
-```bash
-./mvnw spring-boot:run
-```
-
-The default profile is `demo`: in-memory H2, Swagger UI and DEBUG logging enabled.
-
-| What | URL |
-| --- | --- |
-| Swagger UI | http://localhost:8080/swagger-ui.html |
-| OpenAPI JSON | http://localhost:8080/v3/api-docs |
-| Health | http://localhost:8080/actuator/health |
-| H2 console | http://localhost:8080/h2-console (JDBC URL `jdbc:h2:mem:courier-tracking`, user `sa`, empty password) |
-
-Other ways to run:
+Requires Java 21+. The Maven wrapper is included.
 
 ```bash
-docker compose up --build            # Docker, see "Run with Docker" below
-
-DB_USERNAME=... DB_PASSWORD=... \
-  ./mvnw spring-boot:run -Dspring-boot.run.profiles=postgres   # PostgreSQL on localhost:5432/courier_tracking
+./mvnw spring-boot:run      # starts on http://localhost:8080
+./demo.sh                   # in a second terminal: streams a sample courier and prints the results
+./mvnw test                 # unit + integration tests
 ```
 
-The schema is managed by Flyway (`src/main/resources/db/migration`).
-
-### Run with Docker
-
-Only Docker (with Compose) is needed; Java and Maven are not required on the host. The image builds the application
-itself (tests are skipped in the image build, run them with `./mvnw test`).
-
-```bash
-docker compose up --build -d      # build and start in the background
-docker compose ps                 # "healthy" once the application is ready (about 15-30 s)
-docker compose logs -f            # follow the log: every counted entrance is logged
-docker compose down               # stop and remove (in-memory data is gone)
-```
-
-The application is then reachable at http://localhost:8080 (Swagger UI at `/swagger-ui.html`), so all curl examples
-and `./demo.sh` work unchanged. If port 8080 is already in use, pick another host port:
-
-```bash
-APP_PORT=8090 docker compose up --build -d
-./demo.sh http://localhost:8090
-```
-
-Without Compose:
-
-```bash
-docker build -t courier-tracking .
-docker run --rm -p 8080:8080 courier-tracking
-```
-
-The container runs as a non-root user with the default `demo` profile (in-memory H2, Swagger UI on). To use PostgreSQL
-instead, pass `-e SPRING_PROFILES_ACTIVE=postgres -e DB_USERNAME=... -e DB_PASSWORD=...` and point
-`spring.datasource.url` at your database (`-e SPRING_DATASOURCE_URL=jdbc:postgresql://host:5432/courier_tracking`).
-
-### Persistence
-
-The default setup uses **H2 in memory, so all data (locations, courier state, entrances) is lost on restart.** Stores are
-reloaded from `stores.json` at every start. Use the `postgres` profile for durable data.
-
-## Test
-
-```bash
-./mvnw test
-```
-
-`PostgresIntegrationTest` uses Testcontainers and is skipped when Docker is not available.
-
-## Demo scripts
-
-With the application running:
-
-```bash
-./demo.sh          # one courier walks towards a store, leaves and comes back; prints status codes and results
-./demo-stream.sh   # larger scenario, optional args: BASE_URL and number of bulk couriers
-```
+Swagger UI: http://localhost:8080/swagger-ui.html
 
 ## API
 
-Base path: `/api/v1`.
-
-### `POST /couriers/locations` — ingest one location
+| Method | Path | Result |
+| --- | --- | --- |
+| `POST` | `/api/couriers/locations` | `200`, or `400` for an invalid location |
+| `GET` | `/api/couriers/{courierId}/total-distance` | `{"courierId":"c1","totalDistanceMeters":909.96}`, `404` for an unknown courier |
+| `GET` | `/api/couriers/{courierId}/store-entrances` | `[{"courierId":"c1","storeName":"Ataşehir MMM Migros","time":"..."}]`, `404` for an unknown courier |
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/couriers/locations \
+curl -X POST http://localhost:8080/api/couriers/locations \
   -H 'Content-Type: application/json' \
-  -d '{"time":"2026-01-01T10:00:00Z","courierId":"courier-1","lat":40.9927807,"lng":29.1244229}'
+  -d '{"time":"2026-01-01T10:00:00Z","courierId":"courier-1","lat":40.9923307,"lng":29.1244229}'
 ```
-
-Returns `202 Accepted` with an empty body.
 
 | Field | Rule |
 | --- | --- |
-| `time` | required, ISO-8601 **with offset** (e.g. `2026-01-01T10:00:00Z` or `...+03:00`); normalised to UTC. Epoch numbers are rejected. Must not be more than 5 minutes ahead of the server clock |
-| `courierId` | required, not blank, max 64 chars, only letters, digits, `.` `_` `:` `-` |
-| `lat` | required number, -90 to 90 |
-| `lng` | required number, -180 to 180 |
+| `time` | required, ISO-8601 with offset (`2026-01-01T10:00:00Z`), at most 1 minute ahead of the server clock |
+| `courierId` | required, 1-64 letters, digits, `.`, `_`, `-` |
+| `lat` / `lng` | required, -90..90 / -180..180 |
 
-Invalid input (missing/null field, blank id, out-of-range or non-numeric value, `NaN`, malformed JSON, bad time format)
-returns `400` with a common error body (a `time` too far in the future gives the same `400` without `fieldErrors`):
+Errors use the RFC 9457 problem format; validation errors list the invalid fields under `errors`.
 
-```json
-{"timestamp":"...","status":400,"error":"Bad Request","message":"Request validation failed","path":"/api/v1/couriers/locations","fieldErrors":{"lat":"lat must be between -90 and 90"}}
-```
-
-### `POST /couriers/locations/batch` — ingest several locations
-
-```bash
-curl -X POST http://localhost:8080/api/v1/couriers/locations/batch \
-  -H 'Content-Type: application/json' \
-  -d '{"locations":[
-        {"time":"2026-01-01T10:00:00Z","courierId":"courier-2","lat":40.9946,"lng":29.1244229},
-        {"time":"2026-01-01T10:00:30Z","courierId":"courier-2","lat":40.9927807,"lng":29.1244229}]}'
-```
-
-1 to 1000 locations, possibly of several couriers. They are sorted by event time and processed one by one; the batch is
-**not atomic** (a failing item does not roll back earlier ones). Returns `202`.
-
-### `GET /couriers/{courierId}/total-distance`
-
-```bash
-curl http://localhost:8080/api/v1/couriers/courier-2/total-distance
-# {"courierId":"courier-2","totalDistanceMeters":202.29693004420457}   (after the batch example above)
-```
-
-The unit is **meters**. `404` if no location of this courier has been accepted yet.
-
-### `GET /couriers/{courierId}/store-entrances`
-
-```bash
-curl http://localhost:8080/api/v1/couriers/courier-2/store-entrances
-# [{"storeId":1,"storeName":"Ataşehir MMM Migros","entranceTime":"2026-01-01T10:00:30Z"}]
-```
-
-Counted entrances, oldest first. `404` for an unknown courier; `200` with `[]` for a known courier without entrances.
-
-### `GET /stores`
-
-Lists the stores loaded from `stores.json`.
-
-## How it works
+## Design
 
 ```
-Controller -> LocationService -> publishes CourierLocationEvent
-                                   |-> StoreEntranceListener  -> EntranceRule chain -> StoreEntranceRepository + StoreEntranceEvent
-                                   |-> TravelDistanceListener -> CourierState (total distance)
-                                   StoreEntranceEvent -> StoreEntranceLogListener (SLF4J)
+CourierController ──> CourierTrackingService ──> CourierRepository (in memory)
+                              │                  StoreRepository   (stores.json)
+                              │
+                              ├─ DistanceCalculator ◄── HaversineDistanceCalculator      (Strategy)
+                              └─ publishes StoreEntrance ──> StoreEntranceLogger          (Observer)
 ```
 
-Everything for one location runs in one transaction, so the raw log, the courier state and the entrances commit together.
+For each location `CourierTrackingService.recordLocation`:
 
-### Stores
+1. rejects a time too far in the future,
+2. ignores the location if it is older than the courier's last accepted one,
+3. for every store, counts an entrance if the courier moved from outside to inside the 100 m radius and the last
+   entrance of this courier to this store was at least 1 minute ago,
+4. adds the distance from the previous location to the total.
 
-`src/main/resources/stores.json` (`name`, `lat`, `lng`, UTF-8) is read at startup and upserted by name. The application
-**fails to start** if the file is missing, malformed, empty, has a store without name or coordinates, an out-of-range
-coordinate or a duplicate name. Location: `courier-tracking.stores-file`.
+### Design patterns
 
-### Configuration (`application.yml`)
+- **Strategy**: `DistanceCalculator` hides how distance is measured. The service uses it for both the store radius and
+  the travel distance, so another formula (e.g. Vincenty) can be added without touching the service.
+- **Observer**: a counted entrance is published as a Spring application event. `StoreEntranceLogger` logs it (the
+  "log courier and store" requirement). Other reactions, such as notifications or metrics, can be added as new
+  listeners without changing the tracking logic.
 
-| Property | Default | Meaning |
-| --- | --- | --- |
-| `courier-tracking.entrance.radius-meters` | 100 | store radius |
-| `courier-tracking.entrance.reentry-cooldown` | 60s | minimum time between two counted entrances of the same courier to the same store |
-| `courier-tracking.distance.algorithm` | haversine | `haversine` or `equirectangular` |
-| `courier-tracking.distance.min-movement-meters` | 0 | legs shorter than this are treated as GPS noise (not added to the distance) |
-| `courier-tracking.location.max-future-skew` | 5m | how far a ping's `time` may be ahead of the server clock (tolerates clock drift between devices and server) |
-| `courier-tracking.concurrency.max-retries` / `retry-delay` | 5 / 10ms | retries on concurrent updates of the same courier |
+## Decisions and edge cases
 
-## Design patterns
-
-- **Observer** — `LocationService` publishes a `CourierLocationEvent` and does not know who reacts. `StoreEntranceListener`
-  and `TravelDistanceListener` are independent subscribers, and `StoreEntranceLogListener` subscribes to the
-  `StoreEntranceEvent`. New reactions (e.g. notifications) can be added without touching the ingestion code.
-- **Strategy** — `DistanceCalculator` with `HaversineDistanceCalculator` (default, accurate on a sphere) and
-  `EquirectangularDistanceCalculator`; chosen by configuration in `DistanceCalculatorConfig`. Both the radius check and
-  the travelled distance use the same strategy.
-- **Chain of Responsibility** — an entrance is counted only if every `EntranceRule` agrees, in `@Order`:
-  `WithinRadiusRule` → `OutsideToInsideTransitionRule` → `ReentryCooldownRule`. Each rule is small and tested alone.
-- **Repository** (Spring Data) for persistence and Spring **singleton** beans for services and listeners.
-
-## Decisions on ambiguous points
-
-**Entrances**
-- **Radius:** a point at exactly 100 m is *inside* (`<=`).
-- **What counts as an entrance:** the courier's previous accepted position was outside the store (or there is none) and the
-  current one is inside. A courier waiting inside produces one entrance, not one per minute. A courier whose first ping is
-  already inside gets an entrance.
-- **"Over 1 minute":** the cooldown is measured between the **event times** of the two entrances, never the server clock.
-  Exactly 60 s later counts again (`>=`); 59.999 s does not.
-- **GPS jitter:** an out-in re-entry inside the cooldown is not counted and does **not** restart the cooldown.
-- Every store is checked independently: different couriers at the same store, or the same courier at different stores
-  within a minute, all count; a point inside several radii counts each store.
+**Store entrances**
+- A point exactly 100 m from the store is inside.
+- An entrance is the move from outside to inside. A courier waiting inside a store is one entrance, not one
+  per location. A courier whose first location is already inside gets an entrance.
+- "Reentries over 1 minute": a re-entry less than 1 minute after the last counted entrance to the same store is not
+  counted. Exactly 1 minute later counts. The rule uses the location times, not the server clock.
+- Stores and couriers are independent: the same courier entering two stores, or two couriers entering the same store,
+  within a minute all count.
 
 **Time and ordering**
-- **Time source:** the `time` sent by the client; the server clock is only used for error timestamps.
-- A location **older than the courier's last accepted one** is saved in the raw log (`courier_locations`) but ignored for
-  entrances and distance. A location with the **same timestamp** as the last one is in order and is processed, even with
-  different coordinates.
-- An **identical duplicate** event adds 0 m and cannot produce an entrance (the courier was already at that point), but
-  it is stored again in the raw log.
-- **Gaps:** after a long silence the distance is the straight line between the two pings; no gap detection.
-- **Future timestamps are rejected** with `400` if `time` is more than `max-future-skew` (5 min) ahead of the server
-  clock; otherwise a far-future ping would make every later, correct ping "out of order" for that courier. In a batch,
-  one such item rejects the whole batch before anything is processed.
-- **Old timestamps are accepted** (no maximum age): a courier's first ping may be arbitrarily old, which supports
-  replaying history and the demo scripts. Later pings older than the courier's last accepted one are handled by the
-  out-of-order rule above, so they cannot corrupt distance or entrances.
+- The time sent by the client is used. A location older than the courier's last accepted one is ignored (logged as a
+  warning). Otherwise it would add a zig-zag to the distance or create a false entrance.
+- A location with the same time as the last one is processed. An exact duplicate adds 0 m and no entrance.
+- A time more than 1 minute in the future is rejected with `400`. Otherwise every later, correct location of that
+  courier would be treated as out of order.
 
 **Distance**
-- Great-circle distance in **meters** (Haversine), summed leg by leg. The first ping gives 0; the same point again adds 0.
-- **No speed filter:** unrealistic jumps (e.g. > 200 km/h) are not rejected. `min-movement-meters` is 0 by default.
-- **Unknown courier** (no accepted location yet): `404` for both courier endpoints.
+- Great-circle (Haversine) distance in meters, summed leg by leg. The first location gives 0.
+- An unknown courier (no location yet) returns `404` instead of `0`, so a mistyped id is not mistaken for a courier who
+  did not move.
 
 **Concurrency**
-- Pings of one courier are serialised with an optimistic lock on `courier_states` (force-increment, version column) and
-  retried; the same entrance can therefore not be written twice. If retries are exhausted the API answers `409 Conflict`.
-  Different couriers run in parallel.
+- Locations of the same courier are processed one at a time (`synchronized` on the courier), so two parallel requests
+  cannot double-count an entrance or lose a distance update. Different couriers are processed in parallel
+  (`ConcurrentHashMap`).
 
-## Known limitations
+**Input**
+- Missing fields, out-of-range coordinates, non-numeric values, an invalid time and malformed JSON return `400`.
+  `courierId` is restricted to safe characters because it appears in log lines.
+- The application does not start if `stores.json` is missing, malformed or empty.
 
-- Entrances are detected from pings only. If pings are sparse (e.g. one every minute) a courier can cross the 100 m
-  circle between two pings and the entrance is missed; there is no interpolation along the path.
-- In-memory H2 by default: data is lost on restart.
-- Raw location log grows without retention.
-- No authentication.
+## Limitations
+
+- Data is kept in memory and lost on restart. A database can replace `CourierRepository` without changing the service.
+- Entrances are detected only at the reported points. If a courier crosses the radius between two sparse locations,
+  the entrance is missed.
+- GPS noise is not filtered: small jumps while standing still add to the distance.

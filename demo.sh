@@ -1,56 +1,47 @@
 #!/usr/bin/env bash
+# Streams the locations of one courier around Ataşehir MMM Migros and prints the results.
+# Usage: ./demo.sh [base-url]   (the application must be running, e.g. ./mvnw spring-boot:run)
 set -euo pipefail
 
 BASE_URL="${1:-http://localhost:8080}"
-COURIER_ID="demo-courier-$(date +%s)"
+COURIER_ID="demo-$(date +%s)"
 STORE_LAT=40.9923307
 STORE_LNG=29.1244229
-METERS_PER_DEGREE_OF_LATITUDE=111194.93
 
-north_of_store() {
-  awk -v lat="$STORE_LAT" -v meters="$1" -v scale="$METERS_PER_DEGREE_OF_LATITUDE" \
-    'BEGIN { printf "%.7f", lat + meters / scale }'
-}
-
-event_time() {
-  printf '2026-01-01T10:%02d:%02dZ' $(($1 / 60)) $(($1 % 60))
-}
-
-pretty() {
-  if command -v jq >/dev/null 2>&1; then jq .; else cat; echo; fi
-}
+# Latitude of a point the given number of meters north of the store (1 degree of latitude is about 111 195 m).
+north_of_store() { awk -v lat="$STORE_LAT" -v m="$1" 'BEGIN { printf "%.7f", lat + m / 111194.93 }'; }
 
 send() {
-  local seconds=$1 meters=$2 note=$3 time lat
-  time=$(event_time "$seconds")
-  lat=$(north_of_store "$meters")
-  printf '  %s  %3s m from the store  %-44s HTTP ' "$time" "$meters" "$note"
-  curl -s -o /dev/null -w '%{http_code}\n' -X POST "$BASE_URL/api/v1/couriers/locations" \
+  local time="2026-01-01T10:$1Z" lat
+  lat=$(north_of_store "$2")
+  printf '  %s  %3s m from the store  %-36s HTTP ' "$time" "$2" "$3"
+  curl -s -o /dev/null -w '%{http_code}\n' -X POST "$BASE_URL/api/couriers/locations" \
     -H 'Content-Type: application/json' \
     -d "{\"time\":\"$time\",\"courierId\":\"$COURIER_ID\",\"lat\":$lat,\"lng\":$STORE_LNG}"
 }
 
-if ! curl -sf "$BASE_URL/actuator/health/readiness" >/dev/null; then
-  echo "The application is not running at $BASE_URL (start it with ./mvnw spring-boot:run or docker compose up)." >&2
+if ! curl -s -o /dev/null "$BASE_URL"; then
+  echo "The application is not running at $BASE_URL (start it with ./mvnw spring-boot:run)." >&2
   exit 1
 fi
 
-echo "Courier $COURIER_ID around Ataşehir MMM Migros (radius 100 m, re-entry cooldown 60 s)"
-echo
-send   0 300 "approaching, outside"
-send  20 150 "still outside"
-send  40  50 "crosses into the radius: ENTRANCE #1"
-send  50  20 "stays inside: no new entrance"
-send  60 200 "leaves the store"
-send  70  50 "back 30 s after #1: NOT counted"
-send  90 200 "leaves again"
-send 160  50 "back 2 min after #1: ENTRANCE #2"
+echo "Courier $COURIER_ID around Ataşehir MMM Migros (radius 100 m, re-entry threshold 1 min)"
+send 00:00 300 "outside"
+send 00:20  50 "moves in: ENTRANCE #1"
+send 00:40  20 "stays inside: no new entrance"
+send 01:00 200 "leaves"
+send 01:10  50 "back 50 s after #1: not counted"
+send 01:30 200 "leaves again"
+send 00:50 500 "late (out of order): ignored"
+send 02:30  50 "back 2 min after #1: ENTRANCE #2"
 
 echo
-echo "Store entrances (expected: 10:00:40Z and 10:02:40Z):"
-curl -s "$BASE_URL/api/v1/couriers/$COURIER_ID/store-entrances" | pretty
-echo
-echo "Total distance (expected: about 910 m = 150 + 100 + 30 + 180 + 150 + 150 + 150):"
-curl -s "$BASE_URL/api/v1/couriers/$COURIER_ID/total-distance" | pretty
-echo
-echo "The application log shows each decision: search it (console, or docker compose logs) for $COURIER_ID"
+echo "Store entrances (expected 10:00:20Z and 10:02:30Z):"
+curl -s "$BASE_URL/api/couriers/$COURIER_ID/store-entrances"; echo
+echo "Total distance (expected about 250+30+180+150+150+150 = 910 m):"
+curl -s "$BASE_URL/api/couriers/$COURIER_ID/total-distance"; echo
+echo "Invalid location (lat 91):"
+curl -s -X POST "$BASE_URL/api/couriers/locations" -H 'Content-Type: application/json' \
+  -d "{\"time\":\"2026-01-01T10:00:00Z\",\"courierId\":\"$COURIER_ID\",\"lat\":91,\"lng\":29}"; echo
+echo "Unknown courier:"
+curl -s "$BASE_URL/api/couriers/nobody-$COURIER_ID/total-distance"; echo
