@@ -5,15 +5,48 @@ her kuryenin kat ettiği toplam mesafeyi raporlayan Spring Boot REST servisi.
 
 ## Çalıştırma
 
-Java 21 veya üstü gerekir. Maven wrapper projeye dahildir.
+### Docker ile (önerilen)
+
+Yalnızca Docker gerekir; Java veya Maven kurulu olması gerekmez.
 
 ```bash
-./mvnw spring-boot:run      # http://localhost:8080 üzerinde başlar
-./demo.sh                   # ikinci bir terminalde: örnek bir kuryenin konumlarını gönderir ve sonuçları yazdırır
-./mvnw test                 # unit ve entegrasyon testleri
+docker compose up --build       # imajı derler ve http://localhost:8080 üzerinde başlatır
+./demo.sh                       # ikinci bir terminalde: örnek bir kuryenin konumlarını gönderir ve sonuçları yazdırır
+docker compose down             # durdurur
 ```
 
-Swagger UI: http://localhost:8080/swagger-ui.html
+İlk derleme bağımlılıkları indirdiği için birkaç dakika sürebilir. 8080 portu doluysa başka bir port seçin:
+
+```bash
+APP_PORT=8090 docker compose up --build
+./demo.sh http://localhost:8090
+```
+
+### Java ile
+
+Java 21 veya üstü gerekir; Maven wrapper projeye dahildir.
+
+```bash
+./mvnw spring-boot:run          # http://localhost:8080 üzerinde başlar
+./mvnw test                     # unit ve entegrasyon testleri
+```
+
+8080 portu doluysa: `./mvnw spring-boot:run -Dspring-boot.run.arguments=--server.port=8090`.
+
+Swagger UI: http://localhost:8080/swagger-ui.html. Mağaza girişleri uygulama loguna yazılır
+(`Courier ... entered ... at ...`); Docker'da `docker compose logs -f` ile izlenebilir.
+
+## Case gereksinimleri
+
+| Gereksinim | Karşılığı |
+| --- | --- |
+| Akış halinde konum alan REST uygulaması | `POST /api/couriers/locations` |
+| Mağazanın 100 m çevresine giren kurye ve mağazanın loglanması | `StoreEntranceDetector` kuralı, `StoreEntranceLogger` logu |
+| Aynı mağazaya 1 dakika içindeki tekrar girişin sayılmaması | `StoreEntranceDetector`, ayarlanabilir eşik |
+| Mağazaların `stores.json`'dan okunması | `JsonStoreReader`, `src/main/resources/stores.json` |
+| Toplam mesafe sorgusu (`getTotalTravelDistance`) | `CourierTrackingService.getTotalTravelDistance`, `GET /api/couriers/{courierId}/total-distance` |
+| En az 2 tasarım deseni | Strategy (`DistanceCalculator`), Observer (Spring event + `StoreEntranceLogger`) |
+| Kolay çalıştırma ve test | Docker Compose, `demo.sh`, `./mvnw test` |
 
 ## Yapılandırma
 

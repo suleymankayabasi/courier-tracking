@@ -8,3 +8,9 @@ courier-tracking:
     reentry-threshold: 1m
   location:
     allowed-clock-skew: 1m
+
+springdoc:
+  api-docs:
+    enabled: true
+  swagger-ui:
+    enabled: true

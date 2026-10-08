@@ -17,8 +17,9 @@ send() {
     -d "{\"time\":\"$time\",\"courierId\":\"$COURIER_ID\",\"lat\":$lat,\"lng\":$STORE_LNG}"
 }
 
-if ! curl -s -o /dev/null "$BASE_URL"; then
-  echo "The application is not running at $BASE_URL (start it with ./mvnw spring-boot:run)." >&2
+if ! curl -s "$BASE_URL/api/couriers/$COURIER_ID/total-distance" | grep -q 'Courier not found'; then
+  echo "Courier Tracking is not running at $BASE_URL." >&2
+  echo "Start it with 'docker compose up --build' or './mvnw spring-boot:run'; if port 8080 is taken, see the README." >&2
   exit 1
 fi
 

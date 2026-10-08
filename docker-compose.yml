@@ -1,0 +1,6 @@
+services:
+  courier-tracking:
+    build: .
+    image: courier-tracking
+    ports:
+      - "${APP_PORT:-8080}:8080"
