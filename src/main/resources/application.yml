@@ -1,0 +1,46 @@
+spring:
+  application:
+    name: courier-tracking
+  profiles:
+    default: demo
+  datasource:
+    url: jdbc:h2:mem:courier-tracking;DB_CLOSE_DELAY=-1
+    username: sa
+    password:
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+  flyway:
+    enabled: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
+    path: /swagger-ui.html
+
+courier-tracking:
+  stores-file: classpath:stores.json
+  entrance:
+    radius-meters: 100
+    reentry-cooldown: 60s
+  distance:
+    algorithm: haversine
+    min-movement-meters: 0
+  location:
+    max-future-skew: 5m
+  concurrency:
+    max-retries: 5
+    retry-delay: 10ms
