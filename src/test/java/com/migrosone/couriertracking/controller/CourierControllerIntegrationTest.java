@@ -1,5 +1,9 @@
 package com.migrosone.couriertracking.controller;
 
+import static com.migrosone.couriertracking.support.TestFixtures.ATASEHIR;
+import static com.migrosone.couriertracking.support.TestFixtures.START_TIME;
+import static com.migrosone.couriertracking.support.TestFixtures.metersNorthOf;
+import static com.migrosone.couriertracking.support.TestFixtures.secondsAfterStart;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.closeTo;
 import static org.hamcrest.Matchers.hasSize;
@@ -9,6 +13,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.migrosone.couriertracking.model.GeoPoint;
 import java.time.Instant;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -35,37 +40,37 @@ class CourierControllerIntegrationTest {
 
 	@Test
 	void tracksEntrancesAndDistance(CapturedOutput output) throws Exception {
-		postLocation("2026-01-01T10:00:00Z", 40.9941307, 29.1244229).andExpect(status().isNoContent());
-		postLocation("2026-01-01T10:00:30Z", 40.9923307, 29.1244229).andExpect(status().isNoContent());
+		postLocation(START_TIME, metersNorthOf(ATASEHIR, 200)).andExpect(status().isNoContent());
+		postLocation(secondsAfterStart(30), ATASEHIR.location()).andExpect(status().isNoContent());
 
 		mockMvc.perform(get("/api/couriers/{id}/store-entrances", courierId))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$", hasSize(1)))
-				.andExpect(jsonPath("$[0].storeName").value("Ataşehir MMM Migros"))
+				.andExpect(jsonPath("$[0].storeName").value(ATASEHIR.name()))
 				.andExpect(jsonPath("$[0].time").value("2026-01-01T10:00:30Z"));
 		mockMvc.perform(get("/api/couriers/{id}/total-distance", courierId))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.courierId").value(courierId))
-				.andExpect(jsonPath("$.totalDistanceMeters").value(closeTo(200.15, 0.1)));
-		assertThat(output).contains("Courier " + courierId + " entered Ataşehir MMM Migros at 2026-01-01T10:00:30Z");
+				.andExpect(jsonPath("$.totalDistanceMeters").value(closeTo(200, 0.5)));
+		assertThat(output).contains("Courier " + courierId + " entered " + ATASEHIR.name() + " at 2026-01-01T10:00:30Z");
 	}
 
 	@Test
-	void unknownCourierIsNotFound() throws Exception {
+	void returnsNotFoundForUnknownCourier() throws Exception {
 		mockMvc.perform(get("/api/couriers/{id}/total-distance", courierId)).andExpect(status().isNotFound());
 		mockMvc.perform(get("/api/couriers/{id}/store-entrances", courierId)).andExpect(status().isNotFound());
 	}
 
 	@Test
-	void futureTimeIsRejected() throws Exception {
-		postLocation(Instant.now().plusSeconds(3600).toString(), 40.99, 29.12)
+	void rejectsTimeInTheFuture() throws Exception {
+		postLocation(Instant.now().plusSeconds(3600), ATASEHIR.location())
 				.andExpect(status().isBadRequest())
 				.andExpect(jsonPath("$.detail").exists());
 	}
 
 	@Test
-	void validationErrorsNameTheField() throws Exception {
-		postLocation("2026-01-01T10:00:00Z", 91, 29.12)
+	void namesTheInvalidFieldInValidationErrors() throws Exception {
+		postLocation(START_TIME, 91, 29)
 				.andExpect(status().isBadRequest())
 				.andExpect(jsonPath("$.errors.lat").value("lat must be between -90 and 90"));
 	}
@@ -100,16 +105,22 @@ class CourierControllerIntegrationTest {
 			"{\"time\":\"2026-01-01T10:00:00Z\",\"courierId\":\"c\",\"lat\":\"NaN\",\"lng\":29.12}",
 			"{\"time\":\"yesterday\",\"courierId\":\"c\",\"lat\":40.99,\"lng\":29.12}",
 			"{\"time\":\"2026-01-01T10:00:00\",\"courierId\":\"c\",\"lat\":40.99,\"lng\":29.12}",
+			"{\"time\":1767261600,\"courierId\":\"c\",\"lat\":40.99,\"lng\":29.12}",
+			"{\"time\":1767261600000,\"courierId\":\"c\",\"lat\":40.99,\"lng\":29.12}",
 			"not json",
 			""})
-	void invalidLocationIsRejected(String body) throws Exception {
+	void rejectsInvalidLocation(String body) throws Exception {
 		mockMvc.perform(post("/api/couriers/locations").contentType(MediaType.APPLICATION_JSON).content(body))
 				.andExpect(status().isBadRequest())
 				.andExpect(jsonPath("$.status").value(400))
 				.andExpect(jsonPath("$.detail").exists());
 	}
 
-	private ResultActions postLocation(String time, double lat, double lng) throws Exception {
+	private ResultActions postLocation(Instant time, GeoPoint location) throws Exception {
+		return postLocation(time, location.lat(), location.lng());
+	}
+
+	private ResultActions postLocation(Instant time, double lat, double lng) throws Exception {
 		String body = """
 				{"time":"%s","courierId":"%s","lat":%s,"lng":%s}""".formatted(time, courierId, lat, lng);
 		return mockMvc.perform(post("/api/couriers/locations").contentType(MediaType.APPLICATION_JSON).content(body));

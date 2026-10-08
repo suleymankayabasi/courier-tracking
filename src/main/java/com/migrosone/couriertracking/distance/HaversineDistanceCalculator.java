@@ -5,17 +5,28 @@ import org.springframework.stereotype.Component;
 
 @Component
 public class HaversineDistanceCalculator implements DistanceCalculator {
-	private static final double EARTH_RADIUS_METERS = 6_371_000;
+	private static final double EARTH_MEAN_RADIUS_METERS = 6_371_000;
+	private static final double MAX_HAVERSINE_VALUE = 1;
 
 	@Override
 	public double distanceInMeters(GeoPoint from, GeoPoint to) {
-		double fromLat = Math.toRadians(from.lat());
-		double toLat = Math.toRadians(to.lat());
-		double deltaLat = toLat - fromLat;
-		double deltaLng = Math.toRadians(to.lng() - from.lng());
+		double fromLatRadians = Math.toRadians(from.lat());
+		double toLatRadians = Math.toRadians(to.lat());
+		double deltaLatRadians = toLatRadians - fromLatRadians;
+		double deltaLngRadians = Math.toRadians(to.lng() - from.lng());
 
-		double a = Math.pow(Math.sin(deltaLat / 2), 2)
-				+ Math.cos(fromLat) * Math.cos(toLat) * Math.pow(Math.sin(deltaLng / 2), 2);
-		return 2 * EARTH_RADIUS_METERS * Math.asin(Math.sqrt(Math.min(1, a)));
+		double haversineOfCentralAngle = haversine(deltaLatRadians)
+				+ Math.cos(fromLatRadians) * Math.cos(toLatRadians) * haversine(deltaLngRadians);
+		return EARTH_MEAN_RADIUS_METERS * inverseHaversine(haversineOfCentralAngle);
+	}
+
+	private static double haversine(double angleRadians) {
+		double sinOfHalfAngle = Math.sin(angleRadians / 2);
+		return sinOfHalfAngle * sinOfHalfAngle;
+	}
+
+	private static double inverseHaversine(double value) {
+		double valueWithoutRoundingOverflow = Math.min(MAX_HAVERSINE_VALUE, value);
+		return 2 * Math.asin(Math.sqrt(valueWithoutRoundingOverflow));
 	}
 }

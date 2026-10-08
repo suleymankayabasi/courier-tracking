@@ -3,7 +3,6 @@ package com.migrosone.couriertracking.controller;
 import com.migrosone.couriertracking.dto.LocationRequest;
 import com.migrosone.couriertracking.dto.StoreEntranceResponse;
 import com.migrosone.couriertracking.dto.TotalDistanceResponse;
-import com.migrosone.couriertracking.model.GeoPoint;
 import com.migrosone.couriertracking.service.CourierTrackingService;
 import jakarta.validation.Valid;
 import java.util.List;
@@ -28,12 +27,11 @@ public class CourierController {
 	@PostMapping("/locations")
 	@ResponseStatus(HttpStatus.NO_CONTENT)
 	public void recordLocation(@Valid @RequestBody LocationRequest request) {
-		courierTrackingService.recordLocation(
-				request.courierId(), request.time(), new GeoPoint(request.lat(), request.lng()));
+		courierTrackingService.recordLocation(request.courierId(), request.time(), request.location());
 	}
 
 	@GetMapping("/{courierId}/total-distance")
-	public TotalDistanceResponse getTotalDistance(@PathVariable String courierId) {
+	public TotalDistanceResponse getTotalTravelDistance(@PathVariable String courierId) {
 		return new TotalDistanceResponse(courierId, courierTrackingService.getTotalTravelDistance(courierId));
 	}
 

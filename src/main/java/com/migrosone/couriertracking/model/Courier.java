@@ -5,17 +5,18 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 public class Courier {
 	private final String id;
-	private GeoPoint lastLocation;
-	private Instant lastTime;
-	private double totalDistanceMeters;
-	private final Map<String, Instant> lastEntranceByStore = new HashMap<>();
+	private final Map<String, Instant> lastEntranceTimeByStoreName = new HashMap<>();
 	private final List<StoreEntrance> entrances = new ArrayList<>();
+	private GeoPoint lastLocation;
+	private Instant lastLocationTime;
+	private double totalDistanceMeters;
 
 	public Courier(String id) {
-		this.id = id;
+		this.id = Objects.requireNonNull(id, "id must not be null");
 	}
 
 	public String id() {
@@ -23,26 +24,26 @@ public class Courier {
 	}
 
 	public synchronized boolean isOutOfOrder(Instant time) {
-		return lastTime != null && time.isBefore(lastTime);
+		return lastLocationTime != null && time.isBefore(lastLocationTime);
 	}
 
 	public synchronized GeoPoint lastLocation() {
 		return lastLocation;
 	}
 
-	public synchronized void moveTo(GeoPoint location, Instant time, double legMeters) {
-		this.lastLocation = location;
-		this.lastTime = time;
-		this.totalDistanceMeters += legMeters;
+	public synchronized void moveTo(GeoPoint location, Instant time, double travelledMeters) {
+		lastLocation = location;
+		lastLocationTime = time;
+		totalDistanceMeters += travelledMeters;
 	}
 
-	public synchronized Instant lastEntranceTo(Store store) {
-		return lastEntranceByStore.get(store.name());
+	public synchronized Instant lastEntranceTimeTo(Store store) {
+		return lastEntranceTimeByStoreName.get(store.name());
 	}
 
 	public synchronized StoreEntrance enter(Store store, Instant time) {
 		StoreEntrance entrance = new StoreEntrance(id, store.name(), time);
-		lastEntranceByStore.put(store.name(), time);
+		lastEntranceTimeByStoreName.put(store.name(), time);
 		entrances.add(entrance);
 		return entrance;
 	}

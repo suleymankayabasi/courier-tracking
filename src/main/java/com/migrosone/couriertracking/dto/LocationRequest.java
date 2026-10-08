@@ -1,15 +1,19 @@
 package com.migrosone.couriertracking.dto;
 
+import com.migrosone.couriertracking.json.IsoInstantDeserializer;
+import com.migrosone.couriertracking.model.GeoPoint;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.DecimalMax;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import java.time.Instant;
+import tools.jackson.databind.annotation.JsonDeserialize;
 
 public record LocationRequest(
 		@Schema(example = "2026-01-01T10:00:00Z")
-		@NotNull(message = "time is required") Instant time,
+		@NotNull(message = "time is required")
+		@JsonDeserialize(using = IsoInstantDeserializer.class) Instant time,
 
 		@Schema(example = "courier-1")
 		@NotNull(message = "courierId is required")
@@ -25,4 +29,7 @@ public record LocationRequest(
 		@NotNull(message = "lng is required")
 		@DecimalMin(value = "-180", message = "lng must be between -180 and 180")
 		@DecimalMax(value = "180", message = "lng must be between -180 and 180") Double lng) {
+	public GeoPoint location() {
+		return new GeoPoint(lat, lng);
+	}
 }

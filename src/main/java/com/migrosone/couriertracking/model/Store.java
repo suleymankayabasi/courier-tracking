@@ -1,16 +1,12 @@
 package com.migrosone.couriertracking.model;
 
-public record Store(String name, double lat, double lng) {
+import java.util.Objects;
+
+public record Store(String name, GeoPoint location) {
 	public Store {
 		if (name == null || name.isBlank()) {
 			throw new IllegalArgumentException("store name is required");
 		}
-		if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
-			throw new IllegalArgumentException("store " + name + " has invalid coordinates " + lat + ", " + lng);
-		}
-	}
-
-	public GeoPoint location() {
-		return new GeoPoint(lat, lng);
+		Objects.requireNonNull(location, "store location is required");
 	}
 }

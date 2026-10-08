@@ -1,83 +1,101 @@
 package com.migrosone.couriertracking.service;
 
+import static com.migrosone.couriertracking.support.TestFixtures.ATASEHIR;
+import static com.migrosone.couriertracking.support.TestFixtures.NOVADA;
+import static com.migrosone.couriertracking.support.TestFixtures.START_TIME;
+import static com.migrosone.couriertracking.support.TestFixtures.STORE_ENTRANCE_PROPERTIES;
+import static com.migrosone.couriertracking.support.TestFixtures.metersNorthOf;
+import static com.migrosone.couriertracking.support.TestFixtures.secondsAfterStart;
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.migrosone.couriertracking.config.StoreEntranceProperties;
 import com.migrosone.couriertracking.distance.HaversineDistanceCalculator;
 import com.migrosone.couriertracking.model.Courier;
-import com.migrosone.couriertracking.model.GeoPoint;
-import com.migrosone.couriertracking.model.Store;
-import java.time.Instant;
+import java.time.Duration;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
 class StoreEntranceDetectorTest {
-	private static final double METERS_PER_DEGREE_OF_LATITUDE = 111_194.93;
-	private static final Instant T0 = Instant.parse("2026-01-01T10:00:00Z");
-
-	private final Store atasehir = new Store("Ataşehir MMM Migros", 40.9923307, 29.1244229);
-	private final Store novada = new Store("Novada MMM Migros", 40.986106, 29.1161293);
-	private final StoreEntranceDetector detector =
-			new StoreEntranceDetector(() -> List.of(atasehir, novada), new HaversineDistanceCalculator());
+	private final StoreEntranceDetector detector = detectorWith(STORE_ENTRANCE_PROPERTIES);
 	private final Courier courier = new Courier("courier-1");
 
 	@Test
-	void movingFromOutsideToInsideIsAnEntrance() {
-		courier.moveTo(north(atasehir, 300), T0, 0);
+	void detectsMoveFromOutsideToInside() {
+		courier.moveTo(metersNorthOf(ATASEHIR, 300), START_TIME, 0);
 
-		assertThat(detector.enteredStores(courier, north(atasehir, 50), T0.plusSeconds(20))).containsExactly(atasehir);
+		assertThat(detector.findEnteredStores(courier, metersNorthOf(ATASEHIR, 50), secondsAfterStart(20)))
+				.containsExactly(ATASEHIR);
 	}
 
 	@Test
-	void firstLocationInsideIsAnEntrance() {
-		assertThat(detector.enteredStores(courier, north(atasehir, 50), T0)).containsExactly(atasehir);
+	void detectsFirstLocationInsideAStore() {
+		assertThat(detector.findEnteredStores(courier, metersNorthOf(ATASEHIR, 50), START_TIME))
+				.containsExactly(ATASEHIR);
 	}
 
 	@Test
-	void locationOutsideEveryStoreIsNoEntrance() {
-		assertThat(detector.enteredStores(courier, north(atasehir, 300), T0)).isEmpty();
+	void ignoresLocationOutsideEveryStore() {
+		assertThat(detector.findEnteredStores(courier, metersNorthOf(ATASEHIR, 300), START_TIME)).isEmpty();
 	}
 
 	@Test
-	void radiusIsOneHundredMetersInclusive() {
-		assertThat(detector.enteredStores(courier, north(atasehir, 99.9), T0)).containsExactly(atasehir);
-		assertThat(detector.enteredStores(courier, north(atasehir, 100.1), T0)).isEmpty();
+	void treatsOneHundredMetersAsInside() {
+		assertThat(detector.findEnteredStores(courier, metersNorthOf(ATASEHIR, 99.9), START_TIME))
+				.containsExactly(ATASEHIR);
+		assertThat(detector.findEnteredStores(courier, metersNorthOf(ATASEHIR, 100.1), START_TIME)).isEmpty();
 	}
 
 	@Test
-	void stayingInsideIsNoNewEntrance() {
-		courier.enter(atasehir, T0);
-		courier.moveTo(north(atasehir, 50), T0, 0);
+	void ignoresCourierStayingInside() {
+		courier.enter(ATASEHIR, START_TIME);
+		courier.moveTo(metersNorthOf(ATASEHIR, 50), START_TIME, 0);
 
-		assertThat(detector.enteredStores(courier, north(atasehir, 20), T0.plusSeconds(300))).isEmpty();
+		assertThat(detector.findEnteredStores(courier, metersNorthOf(ATASEHIR, 20), secondsAfterStart(300))).isEmpty();
 	}
 
 	@Test
-	void reentryWithinOneMinuteIsNotCounted() {
-		courier.enter(atasehir, T0);
-		courier.moveTo(north(atasehir, 200), T0.plusSeconds(20), 0);
+	void ignoresReentryWithinOneMinute() {
+		courier.enter(ATASEHIR, START_TIME);
+		courier.moveTo(metersNorthOf(ATASEHIR, 200), secondsAfterStart(20), 0);
 
-		assertThat(detector.enteredStores(courier, north(atasehir, 50), T0.plusSeconds(59))).isEmpty();
+		assertThat(detector.findEnteredStores(courier, metersNorthOf(ATASEHIR, 50), secondsAfterStart(59))).isEmpty();
 	}
 
 	@Test
-	void reentryAfterExactlyOneMinuteIsCounted() {
-		courier.enter(atasehir, T0);
-		courier.moveTo(north(atasehir, 200), T0.plusSeconds(30), 0);
+	void detectsReentryAfterExactlyOneMinute() {
+		courier.enter(ATASEHIR, START_TIME);
+		courier.moveTo(metersNorthOf(ATASEHIR, 200), secondsAfterStart(30), 0);
 
-		assertThat(detector.enteredStores(courier, north(atasehir, 50), T0.plusSeconds(60))).containsExactly(atasehir);
+		assertThat(detector.findEnteredStores(courier, metersNorthOf(ATASEHIR, 50), secondsAfterStart(60)))
+				.containsExactly(ATASEHIR);
 	}
 
 	@Test
-	void reentryRuleIsPerStore() {
-		courier.enter(atasehir, T0);
-		courier.moveTo(atasehir.location(), T0, 0);
+	void appliesReentryThresholdPerStore() {
+		courier.enter(ATASEHIR, START_TIME);
+		courier.moveTo(ATASEHIR.location(), START_TIME, 0);
 
-		List<Store> entered = detector.enteredStores(courier, novada.location(), T0.plusSeconds(30));
-
-		assertThat(entered).containsExactly(novada);
+		assertThat(detector.findEnteredStores(courier, NOVADA.location(), secondsAfterStart(30)))
+				.containsExactly(NOVADA);
 	}
 
-	private static GeoPoint north(Store store, double meters) {
-		return new GeoPoint(store.lat() + meters / METERS_PER_DEGREE_OF_LATITUDE, store.lng());
+	@Test
+	void usesConfiguredRadius() {
+		StoreEntranceDetector smallRadiusDetector = detectorWith(new StoreEntranceProperties(50, Duration.ofMinutes(1)));
+
+		assertThat(smallRadiusDetector.findEnteredStores(courier, metersNorthOf(ATASEHIR, 60), START_TIME)).isEmpty();
+	}
+
+	@Test
+	void usesConfiguredReentryThreshold() {
+		StoreEntranceDetector longThresholdDetector = detectorWith(new StoreEntranceProperties(100, Duration.ofMinutes(2)));
+		courier.enter(ATASEHIR, START_TIME);
+		courier.moveTo(metersNorthOf(ATASEHIR, 200), secondsAfterStart(30), 0);
+
+		assertThat(longThresholdDetector.findEnteredStores(courier, ATASEHIR.location(), secondsAfterStart(90))).isEmpty();
+	}
+
+	private static StoreEntranceDetector detectorWith(StoreEntranceProperties properties) {
+		return new StoreEntranceDetector(() -> List.of(ATASEHIR, NOVADA), new HaversineDistanceCalculator(), properties);
 	}
 }

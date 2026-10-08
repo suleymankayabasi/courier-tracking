@@ -1,7 +1,11 @@
-package com.migrosone.couriertracking.exception;
+package com.migrosone.couriertracking.controller;
 
+import com.migrosone.couriertracking.exception.CourierNotFoundException;
+import com.migrosone.couriertracking.exception.InvalidLocationException;
 import java.util.Map;
 import java.util.TreeMap;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
@@ -16,6 +20,8 @@ import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExcep
 
 @RestControllerAdvice
 public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
+	private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
+
 	@ExceptionHandler(CourierNotFoundException.class)
 	ProblemDetail handleCourierNotFound(CourierNotFoundException ex) {
 		return ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, ex.getMessage());
@@ -42,5 +48,11 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 		ProblemDetail problem = ProblemDetail.forStatusAndDetail(status,
 				"Malformed request body (time must be ISO-8601, e.g. 2026-01-01T10:00:00Z)");
 		return handleExceptionInternal(ex, problem, headers, status, request);
+	}
+
+	@ExceptionHandler(Exception.class)
+	ProblemDetail handleUnexpected(Exception ex) {
+		log.error("Unexpected error", ex);
+		return ProblemDetail.forStatusAndDetail(HttpStatus.INTERNAL_SERVER_ERROR, "Unexpected server error");
 	}
 }

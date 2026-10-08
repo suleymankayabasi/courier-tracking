@@ -15,6 +15,19 @@ Java 21 veya üstü gerekir. Maven wrapper projeye dahildir.
 
 Swagger UI: http://localhost:8080/swagger-ui.html
 
+## Yapılandırma
+
+İş kuralı değerleri `src/main/resources/application.yml` içindedir ve kod değişmeden değiştirilebilir:
+
+| Ayar | Varsayılan | Anlamı |
+| --- | --- | --- |
+| `courier-tracking.store-entrance.radius-meters` | `100` | Mağaza yarıçapı (metre) |
+| `courier-tracking.store-entrance.reentry-threshold` | `1m` | Aynı mağazaya tekrar girişin sayılması için gereken en kısa süre |
+| `courier-tracking.location.allowed-clock-skew` | `1m` | Konum zamanının sunucu saatinden en fazla ne kadar ileride olabileceği |
+
+Örneğin `./mvnw spring-boot:run -Dspring-boot.run.arguments=--courier-tracking.store-entrance.radius-meters=150`.
+Geçersiz bir değerde (sıfır veya negatif yarıçap, negatif süre) uygulama başlamaz.
+
 ## API
 
 | Metot | Yol | Sonuç |
@@ -31,19 +44,20 @@ curl -X POST http://localhost:8080/api/couriers/locations \
 
 | Alan | Kural |
 | --- | --- |
-| `time` | zorunlu, saat dilimi içeren ISO-8601 (`2026-01-01T10:00:00Z`), sunucu saatinden en fazla 1 dakika ileride |
+| `time` | zorunlu, saat dilimi içeren ISO-8601 metin (`2026-01-01T10:00:00Z` veya `2026-01-01T13:00:00+03:00`), sunucu saatinden en fazla 1 dakika ileride; sayısal epoch değerleri birimi belirsiz olduğu için reddedilir |
 | `courierId` | zorunlu, 1-64 karakter; harf, rakam, `.`, `_`, `-` |
 | `lat` / `lng` | zorunlu, -90..90 / -180..180 |
 
-Tüm hatalar (Spring'in ürettiği `404`, `405`, `415` dahil) RFC 9457 problem formatında döner; doğrulama hatalarında
-geçersiz alanlar `errors` altında listelenir.
+Tüm hatalar (Spring'in ürettiği `404`, `405`, `415` ve beklenmeyen `500` dahil) RFC 9457 problem formatında döner;
+doğrulama hatalarında geçersiz alanlar `errors` altında listelenir. `500` yanıtı iç ayrıntıyı göstermez, hata loglanır.
 
 ## Tasarım
 
 ```
 CourierController ──> CourierTrackingService ──> CourierRepository ◄── InMemoryCourierRepository
                               │
-                              ├─ StoreEntranceDetector ──> StoreRepository ◄── JsonFileStoreRepository (stores.json)
+                              ├─ StoreEntranceDetector ──> StoreRepository ◄── InMemoryStoreRepository
+                              │                                    (StoreConfig, stores.json'u JsonStoreReader ile okuyup doldurur)
                               ├─ DistanceCalculator ◄── HaversineDistanceCalculator      (Strategy)
                               └─ StoreEntrance yayınlar ──> StoreEntranceLogger          (Observer)
 ```
@@ -57,8 +71,25 @@ CourierController ──> CourierTrackingService ──> CourierRepository ◄�
 4. önceki konumdan olan mesafeyi toplama ekler.
 
 Servis yalnızca akışı yönetir; giriş kuralı `StoreEntranceDetector`'da, mesafe formülü `DistanceCalculator`'da,
-saklama `CourierRepository` arayüzünün arkasındadır. Servis bu bağımlılıkların hepsini constructor'dan alır, bu yüzden
+saklama ve eşzamanlılık `CourierRepository` arayüzünün arkasındadır. Mağazalarda dosya formatı (`JsonStoreReader`),
+liste kuralları ve saklama (`InMemoryStoreRepository`) ile hangi dosyanın okunacağı (`StoreConfig`) ayrı sınıflardadır;
+örneğin YAML'a geçmek yalnızca yeni bir okuyucu gerektirir. Servis bu bağımlılıkların hepsini constructor'dan alır, bu yüzden
 Spring olmadan unit test edilebilir.
+
+### Paket yapısı
+
+| Paket | İçerik |
+| --- | --- |
+| `controller` | REST endpoint'leri ve HTTP hata eşlemesi (`GlobalExceptionHandler`) |
+| `dto` | İstek ve yanıt nesneleri |
+| `json` | JSON'a özel dönüşümler (`IsoInstantDeserializer`, `stores.json` okuyucusu `JsonStoreReader`) |
+| `service` | İş akışı (`CourierTrackingService`) ve giriş kuralı (`StoreEntranceDetector`) |
+| `distance` | Mesafe hesaplama stratejisi |
+| `model` | Domain nesneleri (`Courier`, `Store`, `GeoPoint`, `StoreEntrance`) |
+| `repository` | Depolama arayüzleri ve in-memory gerçekleştirmeleri |
+| `listener` | Giriş event'ini dinleyen observer |
+| `exception` | Domain exception'ları |
+| `config` | Bean tanımları (`Clock`, mağaza deposu) ve ayar sınıfları (`StoreEntranceProperties`, `LocationProperties`) |
 
 ### Tasarım desenleri
 
@@ -69,6 +100,8 @@ Spring olmadan unit test edilebilir.
   listener olarak eklenebilir.
 
 ## Kararlar ve edge case'ler
+
+Aşağıdaki 100 m ve 1 dakika değerleri varsayılanlardır (bkz. Yapılandırma).
 
 **Mağaza girişleri**
 - Mağazaya tam 100 m uzaklıktaki nokta içeride sayılır.
@@ -94,8 +127,11 @@ Spring olmadan unit test edilebilir.
   kuryeyle karıştırılmaz.
 
 **Eşzamanlılık**
-- Aynı kuryenin konumları sırayla işlenir (kurye üzerinde `synchronized`); böylece paralel iki istek bir girişi iki
-  kez sayamaz veya bir mesafe güncellemesini kaybedemez. Farklı kuryeler paralel işlenir (`ConcurrentHashMap`).
+- Aynı kuryenin konumları sırayla işlenir; böylece paralel iki istek bir girişi iki kez sayamaz veya bir mesafe
+  güncellemesini kaybedemez. Bu, `CourierRepository.updateAtomically` sözleşmesidir: kurye yoksa oluşturulur ve
+  güncelleme o kurye için tek başına çalışır. `InMemoryCourierRepository` bunu `ConcurrentHashMap.compute` ile sağlar;
+  farklı kuryeler paralel işlenir. Yeni bir kurye ancak ilk konumu tamamen işlendikten sonra görünür olur; güncelleme
+  hata verirse kurye hiç oluşmaz.
 - Giriş event'leri kurye kilidi bırakıldıktan sonra yayınlanır; yavaş bir listener o kuryenin sonraki konumunu
   geciktirmez.
 
@@ -107,9 +143,9 @@ Spring olmadan unit test edilebilir.
 
 ## Kısıtlar
 
-- Veriler bellekte tutulur ve yeniden başlatmada kaybolur. Veritabanına geçişte `CourierRepository` arayüzünün yeni bir
-  gerçekleştirmesi yazılır; ancak servisteki `synchronized` kilidi bellekteki tek `Courier` nesnesine dayandığı için,
-  aynı kuryenin konumlarını sıraya koyma işi de veritabanına (örneğin satır kilidi) taşınmalıdır.
+- Veriler bellekte tutulur ve yeniden başlatmada kaybolur. Veritabanına geçişte servis değişmez; yeni bir
+  `CourierRepository` gerçekleştirmesi `updateAtomically`'yi bir transaction ve satır kilidiyle (`SELECT ... FOR UPDATE`)
+  sağlar.
 - Girişler yalnızca gönderilen noktalarda tespit edilir. Kurye seyrek iki konum arasında yarıçaptan geçerse giriş
   kaçırılır.
 - GPS gürültüsü filtrelenmez: dururken oluşan küçük sıçramalar mesafeye eklenir.

@@ -1,3 +1,10 @@
 spring:
   application:
     name: courier-tracking
+
+courier-tracking:
+  store-entrance:
+    radius-meters: 100
+    reentry-threshold: 1m
+  location:
+    allowed-clock-skew: 1m
