@@ -3,6 +3,7 @@ package com.migrosone.couriertracking.controller;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.closeTo;
 import static org.hamcrest.Matchers.hasSize;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -34,14 +35,12 @@ class CourierControllerIntegrationTest {
 
 	@Test
 	void tracksEntrancesAndDistance(CapturedOutput output) throws Exception {
-		// 0.0018 degrees of latitude is about 200 m: the courier walks from outside into the Ataşehir store radius.
-		postLocation("2026-01-01T10:00:00Z", 40.9941307, 29.1244229).andExpect(status().isOk());
-		postLocation("2026-01-01T10:00:30Z", 40.9923307, 29.1244229).andExpect(status().isOk());
+		postLocation("2026-01-01T10:00:00Z", 40.9941307, 29.1244229).andExpect(status().isNoContent());
+		postLocation("2026-01-01T10:00:30Z", 40.9923307, 29.1244229).andExpect(status().isNoContent());
 
 		mockMvc.perform(get("/api/couriers/{id}/store-entrances", courierId))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$", hasSize(1)))
-				.andExpect(jsonPath("$[0].courierId").value(courierId))
 				.andExpect(jsonPath("$[0].storeName").value("Ataşehir MMM Migros"))
 				.andExpect(jsonPath("$[0].time").value("2026-01-01T10:00:30Z"));
 		mockMvc.perform(get("/api/couriers/{id}/total-distance", courierId))
@@ -71,6 +70,22 @@ class CourierControllerIntegrationTest {
 				.andExpect(jsonPath("$.errors.lat").value("lat must be between -90 and 90"));
 	}
 
+	@Test
+	void frameworkErrorsUseTheProblemFormat() throws Exception {
+		mockMvc.perform(post("/api/couriers/locations").contentType(MediaType.TEXT_PLAIN).content("x"))
+				.andExpect(status().isUnsupportedMediaType())
+				.andExpect(jsonPath("$.status").value(415))
+				.andExpect(jsonPath("$.timestamp").doesNotExist());
+		mockMvc.perform(delete("/api/couriers/locations"))
+				.andExpect(status().isMethodNotAllowed())
+				.andExpect(jsonPath("$.status").value(405))
+				.andExpect(jsonPath("$.timestamp").doesNotExist());
+		mockMvc.perform(get("/api/unknown"))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.status").value(404))
+				.andExpect(jsonPath("$.timestamp").doesNotExist());
+	}
+
 	@ParameterizedTest
 	@ValueSource(strings = {
 			"{\"courierId\":\"c\",\"lat\":40.99,\"lng\":29.12}",
@@ -89,7 +104,9 @@ class CourierControllerIntegrationTest {
 			""})
 	void invalidLocationIsRejected(String body) throws Exception {
 		mockMvc.perform(post("/api/couriers/locations").contentType(MediaType.APPLICATION_JSON).content(body))
-				.andExpect(status().isBadRequest());
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.status").value(400))
+				.andExpect(jsonPath("$.detail").exists());
 	}
 
 	private ResultActions postLocation(String time, double lat, double lng) throws Exception {

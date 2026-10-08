@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# Streams the locations of one courier around Ataşehir MMM Migros and prints the results.
-# Usage: ./demo.sh [base-url]   (the application must be running, e.g. ./mvnw spring-boot:run)
 set -euo pipefail
 
 BASE_URL="${1:-http://localhost:8080}"
@@ -8,7 +6,6 @@ COURIER_ID="demo-$(date +%s)"
 STORE_LAT=40.9923307
 STORE_LNG=29.1244229
 
-# Latitude of a point the given number of meters north of the store (1 degree of latitude is about 111 195 m).
 north_of_store() { awk -v lat="$STORE_LAT" -v m="$1" 'BEGIN { printf "%.7f", lat + m / 111194.93 }'; }
 
 send() {

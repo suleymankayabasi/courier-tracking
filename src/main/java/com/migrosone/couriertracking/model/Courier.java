@@ -6,10 +6,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Tracking state of one courier. All methods are synchronized on the instance, so a caller can make a whole location
- * update atomic with {@code synchronized (courier) { ... }}.
- */
 public class Courier {
 	private final String id;
 	private GeoPoint lastLocation;
@@ -26,12 +22,10 @@ public class Courier {
 		return id;
 	}
 
-	/** True if {@code time} is before the last accepted location of this courier. */
 	public synchronized boolean isOutOfOrder(Instant time) {
 		return lastTime != null && time.isBefore(lastTime);
 	}
 
-	/** Last accepted location, or {@code null} before the first one. */
 	public synchronized GeoPoint lastLocation() {
 		return lastLocation;
 	}
@@ -42,7 +36,6 @@ public class Courier {
 		this.totalDistanceMeters += legMeters;
 	}
 
-	/** Time of the last counted entrance to the store, or {@code null} if there is none. */
 	public synchronized Instant lastEntranceTo(Store store) {
 		return lastEntranceByStore.get(store.name());
 	}

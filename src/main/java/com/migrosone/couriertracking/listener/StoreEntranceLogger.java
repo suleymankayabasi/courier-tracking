@@ -6,7 +6,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
-/** Observer of counted entrances; more reactions (notifications, metrics) can be added as further listeners. */
 @Component
 public class StoreEntranceLogger {
 	private static final Logger log = LoggerFactory.getLogger(StoreEntranceLogger.class);

@@ -11,7 +11,6 @@ public record LocationRequest(
 		@Schema(example = "2026-01-01T10:00:00Z")
 		@NotNull(message = "time is required") Instant time,
 
-		// The id also appears in log lines, so characters such as line breaks are rejected.
 		@Schema(example = "courier-1")
 		@NotNull(message = "courierId is required")
 		@Pattern(regexp = "[A-Za-z0-9._-]{1,64}",

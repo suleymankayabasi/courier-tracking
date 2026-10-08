@@ -8,34 +8,36 @@ import com.migrosone.couriertracking.distance.HaversineDistanceCalculator;
 import com.migrosone.couriertracking.exception.CourierNotFoundException;
 import com.migrosone.couriertracking.exception.InvalidLocationException;
 import com.migrosone.couriertracking.model.GeoPoint;
+import com.migrosone.couriertracking.model.Store;
 import com.migrosone.couriertracking.model.StoreEntrance;
-import com.migrosone.couriertracking.repository.CourierRepository;
-import com.migrosone.couriertracking.repository.StoreRepository;
+import com.migrosone.couriertracking.repository.InMemoryCourierRepository;
+import java.time.Clock;
 import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
-import tools.jackson.databind.json.JsonMapper;
 
 class CourierTrackingServiceTest {
 	private static final double METERS_PER_DEGREE_OF_LATITUDE = 111_194.93;
 	private static final Instant T0 = Instant.parse("2026-01-01T10:00:00Z");
+	private static final Instant NOW = Instant.parse("2026-01-01T12:00:00Z");
 	private static final GeoPoint ATASEHIR = new GeoPoint(40.9923307, 29.1244229);
-	private static final GeoPoint NOVADA = new GeoPoint(40.986106, 29.1161293);
 	private static final String ATASEHIR_NAME = "Ataşehir MMM Migros";
 	private static final String COURIER = "courier-1";
 
 	private final List<Object> publishedEvents = new CopyOnWriteArrayList<>();
 	private final CourierTrackingService service = new CourierTrackingService(
-			new CourierRepository(),
-			new StoreRepository(JsonMapper.builder().build()),
+			new InMemoryCourierRepository(),
+			new StoreEntranceDetector(
+					() -> List.of(new Store(ATASEHIR_NAME, ATASEHIR.lat(), ATASEHIR.lng())),
+					new HaversineDistanceCalculator()),
 			new HaversineDistanceCalculator(),
-			publishedEvents::add);
-
-	// Distance
+			publishedEvents::add,
+			Clock.fixed(NOW, ZoneOffset.UTC));
 
 	@Test
 	void firstLocationHasZeroDistance() {
@@ -90,15 +92,18 @@ class CourierTrackingServiceTest {
 	}
 
 	@Test
-	void futureTimeIsRejected() {
-		Instant tomorrow = Instant.now().plusSeconds(24 * 60 * 60);
-
-		assertThatThrownBy(() -> service.recordLocation(COURIER, tomorrow, ATASEHIR))
+	void timeMoreThanOneMinuteInTheFutureIsRejected() {
+		assertThatThrownBy(() -> service.recordLocation(COURIER, NOW.plusSeconds(61), ATASEHIR))
 				.isInstanceOf(InvalidLocationException.class);
 		assertThatThrownBy(() -> service.getTotalTravelDistance(COURIER)).isInstanceOf(CourierNotFoundException.class);
 	}
 
-	// Store entrances
+	@Test
+	void smallClockSkewIsTolerated() {
+		service.recordLocation(COURIER, NOW.plusSeconds(60), ATASEHIR);
+
+		assertThat(service.getStoreEntrances(COURIER)).hasSize(1);
+	}
 
 	@Test
 	void enteringTheRadiusIsAnEntrance() {
@@ -111,56 +116,17 @@ class CourierTrackingServiceTest {
 	}
 
 	@Test
-	void firstLocationInsideTheRadiusIsAnEntrance() {
-		record(COURIER, 0, north(ATASEHIR, 50));
-
-		assertThat(service.getStoreEntrances(COURIER)).hasSize(1);
-	}
-
-	@Test
-	void radiusIsOneHundredMeters() {
-		record("inside", 0, north(ATASEHIR, 99.9));
-		record("outside", 0, north(ATASEHIR, 100.1));
-
-		assertThat(service.getStoreEntrances("inside")).hasSize(1);
-		assertThat(service.getStoreEntrances("outside")).isEmpty();
-	}
-
-	@Test
-	void stayingInsideIsNotANewEntrance() {
-		record(COURIER, 0, north(ATASEHIR, 50));
-		record(COURIER, 120, north(ATASEHIR, 20));
-		record(COURIER, 300, north(ATASEHIR, 60));
-
-		assertThat(service.getStoreEntrances(COURIER)).hasSize(1);
-	}
-
-	@Test
-	void reentryWithinOneMinuteIsNotCounted() {
-		record(COURIER, 0, north(ATASEHIR, 50));
-		record(COURIER, 20, north(ATASEHIR, 200));
-		record(COURIER, 59, north(ATASEHIR, 50));
-
-		assertThat(service.getStoreEntrances(COURIER)).extracting(StoreEntrance::time).containsExactly(T0);
-	}
-
-	@Test
-	void reentryAfterOneMinuteIsCounted() {
-		record(COURIER, 0, north(ATASEHIR, 50));
-		record(COURIER, 30, north(ATASEHIR, 200));
-		record(COURIER, 60, north(ATASEHIR, 50));
+	void entranceRuleIsAppliedAcrossAStreamOfLocations() {
+		record(COURIER, 0, north(ATASEHIR, 300));
+		record(COURIER, 20, north(ATASEHIR, 50));
+		record(COURIER, 40, north(ATASEHIR, 20));
+		record(COURIER, 60, north(ATASEHIR, 200));
+		record(COURIER, 70, north(ATASEHIR, 50));
+		record(COURIER, 90, north(ATASEHIR, 200));
+		record(COURIER, 150, north(ATASEHIR, 50));
 
 		assertThat(service.getStoreEntrances(COURIER)).extracting(StoreEntrance::time)
-				.containsExactly(T0, T0.plusSeconds(60));
-	}
-
-	@Test
-	void reentryRuleIsPerStore() {
-		record(COURIER, 0, ATASEHIR);
-		record(COURIER, 30, NOVADA);
-
-		assertThat(service.getStoreEntrances(COURIER)).extracting(StoreEntrance::storeName)
-				.containsExactly(ATASEHIR_NAME, "Novada MMM Migros");
+				.containsExactly(T0.plusSeconds(20), T0.plusSeconds(150));
 	}
 
 	@Test

@@ -3,7 +3,6 @@ package com.migrosone.couriertracking.distance;
 import com.migrosone.couriertracking.model.GeoPoint;
 import org.springframework.stereotype.Component;
 
-/** Great-circle distance on a sphere with the Earth's mean radius. */
 @Component
 public class HaversineDistanceCalculator implements DistanceCalculator {
 	private static final double EARTH_RADIUS_METERS = 6_371_000;
